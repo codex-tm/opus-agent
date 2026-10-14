@@ -2,7 +2,7 @@
 """
 OPUS Agent - Comprehensive Installer Script
 Installs all dependencies, Playwright browsers, sets up config, copies skills.
-Run with: python installer.py [--dev|--build|--install]
+Run with: python installer.py [--dev|--build|--install|--global]
 """
 
 import argparse
@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+import winreg
 from pathlib import Path
 
 
@@ -35,6 +36,10 @@ PLAYWRIGHT_BROWSERS = ["chromium", "firefox", "webkit"]
 SKILLS_SOURCE_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".opus")) / "opus" / "config_v2" / "skills"
 USER_CONFIG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".opus")) / "opus" / "config_v2"
 USER_SKILLS_DIR = USER_CONFIG_DIR / "skills"
+
+# Global install paths
+GLOBAL_BIN_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".opus")) / "opus" / "bin"
+GLOBAL_CONFIG_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".opus")) / "opus" / "config_v2"
 
 
 def run_cmd(cmd, cwd=None, capture=True):
@@ -544,16 +549,142 @@ FunctionEnd
     return False
 
 
+def install_global() -> bool:
+    """Install opus.exe globally (to %LOCALAPPDATA%\\opus\\bin) and add to PATH."""
+    print("\n[GLOBAL] Installing opus globally...")
+    
+    exe_path = Path("dist/opus.exe")
+    if not exe_path.exists():
+        print("  opus.exe not found, run --build first")
+        return False
+    
+    # Create global bin directory
+    GLOBAL_BIN_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Copy executable
+    target_exe = GLOBAL_BIN_DIR / "opus.exe"
+    shutil.copy2(exe_path, target_exe)
+    print(f"  ✓ Copied to {target_exe}")
+    
+    # Copy config_v2 to global config dir
+    GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Copy default config if not exists
+    global_config = GLOBAL_CONFIG_DIR / "config.toml"
+    if not global_config.exists():
+        config_toml = USER_CONFIG_DIR / "config.toml"
+        if config_toml.exists():
+            shutil.copy2(config_toml, global_config)
+            print(f"  ✓ Copied config to {global_config}")
+    
+    # Copy MCP servers config if not exists
+    global_mcp = GLOBAL_CONFIG_DIR / "mcp" / "servers.toml"
+    if not global_mcp.exists():
+        global_mcp.parent.mkdir(parents=True, exist_ok=True)
+        mcp_toml = USER_CONFIG_DIR / "mcp" / "servers.toml"
+        if mcp_toml.exists():
+            shutil.copy2(mcp_toml, global_mcp)
+            print(f"  ✓ Copied MCP config to {global_mcp}")
+    
+    # Copy skills
+    global_skills = GLOBAL_CONFIG_DIR / "skills"
+    if not global_skills.exists() or not any(global_skills.iterdir()):
+        if global_skills.exists():
+            shutil.rmtree(global_skills)
+        shutil.copytree(USER_SKILLS_DIR, global_skills)
+        print(f"  ✓ Copied skills to {global_skills}")
+    
+    # Add to user PATH
+    add_to_user_path(str(GLOBAL_BIN_DIR))
+    
+    # Create opus.bat wrapper for cmd compatibility
+    bat_path = GLOBAL_BIN_DIR / "opus.bat"
+    bat_content = f'@echo off\n"{target_exe}" %*\n'
+    bat_path.write_text(bat_content, encoding="utf-8")
+    print(f"  ✓ Created {bat_path}")
+    
+    print(f"\n  ✓ Global install complete!")
+    print(f"  Run 'opus' from any terminal (restart terminal to pick up PATH)")
+    return True
+
+
+def add_to_user_path(path: str) -> bool:
+    """Add directory to user PATH environment variable."""
+    try:
+        # Get current user PATH
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE)
+        try:
+            current_path, _ = winreg.QueryValueEx(key, "PATH")
+        except FileNotFoundError:
+            current_path = ""
+        
+        # Check if already in PATH
+        paths = [p.strip() for p in current_path.split(";") if p.strip()]
+        if path in paths:
+            print(f"  Already in PATH: {path}")
+            winreg.CloseKey(key)
+            return True
+        
+        # Add to PATH
+        new_path = current_path + (";" if current_path else "") + path
+        winreg.SetValueEx(key, "PATH", 0, winreg.REG_EXPAND_SZ, new_path)
+        winreg.CloseKey(key)
+        
+        # Notify system of environment change
+        import ctypes
+        HWND_BROADCAST = 0xFFFF
+        WM_SETTINGCHANGE = 0x001A
+        SMTO_ABORTIFHUNG = 0x0002
+        ctypes.windll.user32.SendMessageTimeoutW(
+            HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment", SMTO_ABORTIFHUNG, 5000, None
+        )
+        
+        print(f"  ✓ Added to user PATH: {path}")
+        return True
+    except Exception as e:
+        print(f"  WARNING: Could not add to PATH: {e}")
+        return False
+
+
+def create_uninstall_global() -> bool:
+    """Create global uninstaller."""
+    print("\n[GLOBAL] Creating uninstaller...")
+    
+    # Create uninstall script
+    uninstall_script = GLOBAL_BIN_DIR / "uninstall_opus.bat"
+    bin_dir = str(GLOBAL_BIN_DIR).replace("\\", "\\\\")
+    config_dir = str(GLOBAL_CONFIG_DIR).replace("\\", "\\\\")
+    content = f'''@echo off
+echo Removendo OPUS Agent...
+del /q "{bin_dir}\\\\opus.exe" 2>nul
+del /q "{bin_dir}\\\\opus.bat" 2>nul
+del /q "{bin_dir}\\\\uninstall_opus.bat" 2>nul
+rmdir /s /q "{config_dir}" 2>nul
+
+echo Removendo do PATH (requer reinicio do terminal)...
+echo.
+echo Para remover do PATH permanentemente, use:
+echo   setx PATH "%%PATH:{bin_dir};=%%"
+echo   setx PATH "%%PATH:{bin_dir}=%%"
+echo.
+pause
+'''
+    uninstall_script.write_text(content, encoding="utf-8")
+    print(f"  ✓ Created {uninstall_script}")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="OPUS Agent Installer")
     parser.add_argument("--dev", action="store_true", help="Development setup (deps + config + skills)")
     parser.add_argument("--build", action="store_true", help="Build PyInstaller executable")
     parser.add_argument("--installer", action="store_true", help="Create NSIS installer")
-    parser.add_argument("--full", action="store_true", help="Full install: dev + build + installer")
+    parser.add_argument("--global-install", action="store_true", help="Install globally to %%LOCALAPPDATA%%\\opus\\bin and add to PATH", dest="global_install")
+    parser.add_argument("--full", action="store_true", help="Full install: dev + build + installer + global")
     parser.add_argument("--verify", action="store_true", help="Verify installation only")
     args = parser.parse_args()
     
-    if not any([args.dev, args.build, args.installer, args.full, args.verify]):
+    if not any([args.dev, args.build, args.installer, args.global_install, args.full, args.verify]):
         args.full = True  # Default to full
     
     print("=" * 60)
@@ -576,6 +707,10 @@ def main():
     
     if args.build or args.full:
         success = build_executable() and success
+    
+    if args.global_install or args.full:
+        success = install_global() and success
+        success = create_uninstall_global() and success
     
     if args.installer or args.full:
         success = create_nsis_installer() and success
