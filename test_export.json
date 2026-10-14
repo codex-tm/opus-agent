@@ -1,0 +1,30 @@
+{
+  "id": "d8d9d213",
+  "name": "primeira mensagem do usuario",
+  "provider": "anthropic",
+  "model": "claude-3-5-sonnet-20241022",
+  "created_at": 1792003109.9042375,
+  "updated_at": 1792003109.9786956,
+  "total_tokens": 45,
+  "metadata": "{\"tags\": [\"test\", \"python\"], \"project\": \"opus\"}",
+  "messages": [
+    {
+      "role": "user",
+      "content": "ola mundo",
+      "tokens": 10,
+      "created_at": 1792003109.9289503
+    },
+    {
+      "role": "assistant",
+      "content": "ola! como posso ajudar?",
+      "tokens": 15,
+      "created_at": 1792003109.9423048
+    },
+    {
+      "role": "user",
+      "content": "python codigo exemplo",
+      "tokens": 20,
+      "created_at": 1792003109.9613
+    }
+  ]
+}
