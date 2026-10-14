@@ -73,7 +73,7 @@ class OpusWizard:
             elif choice == "2":
                 self._menu_reasoning()
             elif choice == "3":
-                self._menu_security()
+                            self._menu_security_step()
             elif choice == "0":
                 save_config(self.config)
                 self._toast("configuracoes salvas")
